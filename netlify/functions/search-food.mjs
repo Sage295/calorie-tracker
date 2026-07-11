@@ -19,7 +19,11 @@ const readNutrient = (food, key) => {
 const searchUsda = async (query) => {
   const params = new URLSearchParams({ api_key: process.env.USDA_FDC_API_KEY, query, pageSize: '15', dataType: 'Branded,SR Legacy,Survey (FNDDS)' })
   const response = await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`)
-  if (!response.ok) return { ok: false, status: response.status }
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    console.error(`USDA search failed: status=${response.status} body=${body.slice(0, 500)}`)
+    return { ok: false, status: response.status }
+  }
   const data = await response.json()
   return { ok: true, foods: data.foods || [] }
 }
@@ -80,7 +84,8 @@ export default async (request) => {
       }
     }
     return Response.json({ results: foods.map(mapFood), correctedQuery })
-  } catch {
+  } catch (error) {
+    console.error('search-food crashed:', error)
     return Response.json({ error: 'The food database could not be searched. Please try again.' }, { status: 500 })
   }
 }
