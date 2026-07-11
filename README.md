@@ -1,32 +1,20 @@
-# React + TypeScript + Vite
+# CalPal
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A mobile-first calorie planning app with Google-only authentication and saved,
+personalized nutrition targets.
 
-Currently, two official plugins are available:
+## Supabase setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Open the Supabase SQL editor and run `supabase-schema.sql`.
+2. In Authentication > Providers, enable Google and leave other sign-in providers disabled.
+3. Add your Google OAuth client ID and secret to the Google provider.
+4. Add the deployed app URL to Authentication > URL Configuration > Redirect URLs.
+5. Keep `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env`.
 
-## React Compiler
+Run locally with `npm run dev`. Production validation is available through
+`npm run build` and `npm run lint`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Calorie calculation
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The target uses the Mifflin-St Jeor equation, an activity multiplier, and a
+goal-based calorie adjustment. Results are estimates and are not medical advice.
