@@ -25,7 +25,7 @@ export default async (request) => {
     if (!image?.startsWith('data:image/')) return Response.json({ error: 'A valid image is required.' }, { status: 400 })
     const match = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s)
     if (!match) return Response.json({ error: 'The image format is not supported.' }, { status: 400 })
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
       method: 'POST',
       headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
