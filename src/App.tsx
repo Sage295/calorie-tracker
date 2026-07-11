@@ -6,15 +6,18 @@ import './App.css'
 type Goal = 'lose' | 'maintain' | 'gain' | 'muscle' | 'health'
 type Sex = 'female' | 'male'
 type Period = 'week' | 'month' | 'year'
-type DashboardTab = 'home' | 'progress' | 'log' | 'settings'
+type DashboardTab = 'home' | 'progress' | 'labels' | 'settings'
 type NutrientKey = 'fat' | 'saturated_fat' | 'trans_fat' | 'sugar' | 'cholesterol' | 'sodium' | 'potassium'
 type Profile = { displayName: string; trackedNutrients: NutrientKey[]; goal: Goal; heightFeet: string; heightInches: string; weight: string; age: string; sex: Sex; activity: string }
 type NutritionLog = { log_date: string; calories: number; protein_grams: number; fiber_grams: number; carbs_grams: number; extra_nutrients: Partial<Record<NutrientKey, number>> | null }
 type LogDraft = { date: string; calories: string; protein: string; fiber: string; carbs: string; extras: Partial<Record<NutrientKey, string>> }
+type SavedFood = { id: number; name: string; serving_size: string; calories: number; protein_grams: number; fiber_grams: number; carbs_grams: number; image_url: string | null }
+type FoodDraft = { name: string; serving: string; calories: string; protein: string; fiber: string; carbs: string }
 
 const today = () => new Date().toLocaleDateString('en-CA')
 const initialProfile: Profile = { displayName: '', trackedNutrients: [], goal: 'maintain', heightFeet: '', heightInches: '', weight: '', age: '', sex: 'female', activity: '1.375' }
 const emptyLog = (): LogDraft => ({ date: today(), calories: '', protein: '', fiber: '', carbs: '', extras: {} })
+const emptyFood = (): FoodDraft => ({ name: '', serving: '', calories: '', protein: '', fiber: '', carbs: '' })
 const nutrients: Record<NutrientKey, { label: string; unit: 'g' | 'mg'; target: number }> = {
   fat: { label: 'Fat', unit: 'g', target: 70 }, saturated_fat: { label: 'Saturated fat', unit: 'g', target: 20 },
   trans_fat: { label: 'Trans fat', unit: 'g', target: 2 }, sugar: { label: 'Sugar', unit: 'g', target: 50 },
@@ -117,6 +120,11 @@ function App() {
   const [showLog, setShowLog] = useState(false)
   const [showNutrients, setShowNutrients] = useState(false)
   const [logDraft, setLogDraft] = useState<LogDraft>(emptyLog)
+  const [savedFoods, setSavedFoods] = useState<SavedFood[]>([])
+  const [showFoodForm, setShowFoodForm] = useState(false)
+  const [foodDraft, setFoodDraft] = useState<FoodDraft>(emptyFood)
+  const [labelImage, setLabelImage] = useState<File | null>(null)
+  const [labelPreview, setLabelPreview] = useState('')
   const plan = useMemo(() => calculatePlan(profile), [profile])
   const todaysLog = logs.find(log => log.log_date === today())
 
@@ -131,6 +139,10 @@ function App() {
     const { data, error } = await supabase.from('daily_nutrition').select('log_date, calories, protein_grams, fiber_grams, carbs_grams, extra_nutrients').eq('user_id', userId).gte('log_date', start.toLocaleDateString('en-CA')).order('log_date')
     if (error) setMessage(error.message); else setLogs(data || [])
   }, [])
+  const loadSavedFoods = useCallback(async (userId: string) => {
+    const { data, error } = await supabase.from('saved_foods').select('id, name, serving_size, calories, protein_grams, fiber_grams, carbs_grams, image_url').eq('user_id', userId).order('created_at', { ascending: false })
+    if (error) setMessage(error.message); else setSavedFoods(data || [])
+  }, [])
 
   useEffect(() => {
     if (!session) return
@@ -138,9 +150,9 @@ function App() {
       if (!data) return
       const trackedNutrients = (data.tracked_nutrients?.length ? data.tracked_nutrients : data.tracked_nutrient ? [data.tracked_nutrient] : []) as NutrientKey[]
       setProfile({ displayName: data.display_name || data.full_name || session.user.email?.split('@')[0] || 'Pal', trackedNutrients, goal: data.goal, heightFeet: String(data.height_feet), heightInches: String(data.height_inches), weight: String(data.weight_lbs), age: String(data.age), sex: data.sex, activity: String(data.activity_level) })
-      setStep(4); loadLogs(session.user.id)
+      setStep(4); loadLogs(session.user.id); loadSavedFoods(session.user.id)
     })
-  }, [session, loadLogs])
+  }, [session, loadLogs, loadSavedFoods])
 
   const signIn = async () => {
     setMessage('')
@@ -196,6 +208,34 @@ function App() {
     setSaving(false)
     if (error) setMessage(error.message); else setProfile({ ...profile, trackedNutrients })
   }
+  const selectLabelImage = (file?: File) => {
+    if (!file) return
+    if (labelPreview) URL.revokeObjectURL(labelPreview)
+    setLabelImage(file); setLabelPreview(URL.createObjectURL(file))
+  }
+  const saveFood = async () => {
+    if (!session || !foodDraft.name.trim() || !foodDraft.serving.trim()) return
+    setSaving(true); setMessage('')
+    let image_url: string | null = null
+    if (labelImage) {
+      const extension = labelImage.name.split('.').pop() || 'jpg'
+      const path = `${session.user.id}/${crypto.randomUUID()}.${extension}`
+      const { error: uploadError } = await supabase.storage.from('nutrition-labels').upload(path, labelImage, { contentType: labelImage.type, upsert: false })
+      if (uploadError) { setSaving(false); setMessage(uploadError.message); return }
+      image_url = supabase.storage.from('nutrition-labels').getPublicUrl(path).data.publicUrl
+    }
+    const { error } = await supabase.from('saved_foods').insert({ user_id: session.user.id, name: foodDraft.name.trim(), serving_size: foodDraft.serving.trim(), calories: Number(foodDraft.calories || 0), protein_grams: Number(foodDraft.protein || 0), fiber_grams: Number(foodDraft.fiber || 0), carbs_grams: Number(foodDraft.carbs || 0), image_url })
+    setSaving(false)
+    if (error) setMessage(error.message); else { setFoodDraft(emptyFood()); setLabelImage(null); setLabelPreview(''); setShowFoodForm(false); loadSavedFoods(session.user.id) }
+  }
+  const addSavedFood = async (food: SavedFood) => {
+    if (!session) return
+    setSaving(true); setMessage('')
+    const current = logs.find(log => log.log_date === today())
+    const { error } = await supabase.from('daily_nutrition').upsert({ user_id: session.user.id, log_date: today(), calories: (current?.calories || 0) + food.calories, protein_grams: (current?.protein_grams || 0) + food.protein_grams, fiber_grams: (current?.fiber_grams || 0) + food.fiber_grams, carbs_grams: (current?.carbs_grams || 0) + food.carbs_grams, extra_nutrients: current?.extra_nutrients || {}, updated_at: new Date().toISOString() }, { onConflict: 'user_id,log_date' })
+    setSaving(false)
+    if (error) setMessage(error.message); else { setMessage(`${food.name} added to today.`); loadLogs(session.user.id) }
+  }
   const bodyValid = Number(profile.heightFeet) >= 3 && Number(profile.heightInches) >= 0 && Number(profile.heightInches) < 12 && Number(profile.weight) >= 60
   const detailsValid = Number(profile.age) >= 18 && Number(profile.age) <= 100
   const logValid = Number(logDraft.calories) >= 0 && logDraft.calories !== '' && Number(logDraft.protein) >= 0 && Number(logDraft.fiber) >= 0 && Number(logDraft.carbs) >= 0
@@ -219,12 +259,14 @@ function App() {
         </section>
       </>}
       {dashboardTab === 'progress' && <><div className="tab-header"><div><span className="eyebrow">Your stats</span><h1>Progress</h1></div><select value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="week">Weekly</option><option value="month">Monthly</option><option value="year">Yearly</option></select></div><ProgressChart logs={logs} period={period} /><section className="progress-note"><h2>Keep showing up.</h2><p>Each logged day makes your trends more useful. Your chart combines protein, fiber, and carbs from every daily entry.</p></section></>}
+      {dashboardTab === 'labels' && <><div className="tab-header label-heading"><div><span className="eyebrow">Your food library</span><h1>Saved labels</h1></div><button className="add-label-button" onClick={() => setShowFoodForm(true)}>＋</button></div>{savedFoods.length ? <section className="food-library">{savedFoods.map(food => <article key={food.id}>{food.image_url ? <img src={food.image_url} alt={`${food.name} nutrition label`} /> : <div className="food-placeholder">▤</div>}<div><h2>{food.name}</h2><p>{food.serving_size}</p><span>{food.calories} cal · {food.protein_grams}g protein · {food.carbs_grams}g carbs</span></div><button disabled={saving} onClick={() => addSavedFood(food)}>Add</button></article>)}</section> : <section className="empty-library"><img src="/calpal-mascot.png" alt="" /><h2>No saved labels yet</h2><p>Photograph a nutrition label, customize the food and serving, then reuse it whenever you eat it.</p><button onClick={() => setShowFoodForm(true)}>＋ Scan your first label</button></section>}</>}
       {dashboardTab === 'settings' && <><div className="tab-header"><div><span className="eyebrow">Your account</span><h1>Settings</h1></div><button className="avatar-button"><img src={session.user.user_metadata.avatar_url || '/calpal-mascot.png'} alt="Account" /></button></div><section className="settings-card name-settings"><h2>Display name</h2><p>This is the name CalPal uses to welcome you.</p><label>Name<input value={profile.displayName} maxLength={50} onChange={e => setProfile({ ...profile, displayName: e.target.value })} placeholder={session.user.email?.split('@')[0] || 'Your name'} /></label><button className="settings-primary" disabled={!profile.displayName.trim() || saving} onClick={saveDisplayName}>{saving ? 'Saving...' : 'Save name'}</button></section><section className="settings-card tracked-settings"><h2>Tracked nutrients</h2><p>Remove nutrients you no longer want shown. Past log data stays saved.</p>{profile.trackedNutrients.length ? <div>{profile.trackedNutrients.map(key => <span key={key}><b>{nutrients[key].label}</b><button disabled={saving} onClick={() => removeNutrient(key)}>Remove</button></span>)}</div> : <small>No extra nutrients selected.</small>}<button className="settings-primary" onClick={() => setShowNutrients(true)}>Add nutrient</button></section><section className="settings-card"><h2>Your calorie plan</h2><p>Update your goal, body details, or activity level and CalPal will recalculate your targets.</p><button className="settings-primary" onClick={() => setStep(0)}>Update my plan</button></section><section className="settings-card account-card"><h2>Account</h2><p>{session.user.email}</p><button className="signout-button" onClick={() => supabase.auth.signOut()}>Sign out</button></section></>}
       {message && <p className="error">{message}</p>}
     </div>
-    <nav className="bottom-nav" aria-label="Main navigation"><button className={dashboardTab === 'home' ? 'active' : ''} onClick={() => setDashboardTab('home')}><b>⌂</b><span>Home</span></button><button className={dashboardTab === 'progress' ? 'active' : ''} onClick={() => setDashboardTab('progress')}><b>▥</b><span>Progress</span></button><button className="log-nav" onClick={openDailyLog}><b>✦</b><span>Log</span></button><button className={dashboardTab === 'settings' ? 'active' : ''} onClick={() => setDashboardTab('settings')}><b>⚙</b><span>Settings</span></button></nav>
+    <nav className="bottom-nav" aria-label="Main navigation"><button className={dashboardTab === 'home' ? 'active' : ''} onClick={() => setDashboardTab('home')}><b>⌂</b><span>Home</span></button><button className={dashboardTab === 'progress' ? 'active' : ''} onClick={() => setDashboardTab('progress')}><b>▥</b><span>Progress</span></button><button className={`log-nav ${dashboardTab === 'labels' ? 'active' : ''}`} onClick={() => setDashboardTab('labels')}><b>✦</b><span>Labels</span></button><button className={dashboardTab === 'settings' ? 'active' : ''} onClick={() => setDashboardTab('settings')}><b>⚙</b><span>Settings</span></button></nav>
     {showLog && <div className="modal-backdrop" onMouseDown={() => setShowLog(false)}><section className="log-modal" onMouseDown={e => e.stopPropagation()}><button className="close-button" onClick={() => setShowLog(false)}>×</button><span className="eyebrow">Daily check-in</span><h2>Log your nutrition</h2><p>Enter the total from your food for this day.</p><label>Date<input type="date" value={logDraft.date} max={today()} onChange={e => setLogDraft({ ...logDraft, date: e.target.value })} /></label><div className="log-inputs">{([['calories','Calories','kcal'],['protein','Protein','g'],['fiber','Fiber','g'],['carbs','Carbs','g']] as const).map(([key,label,unit]) => <label key={key}>{label}<div><input type="number" min="0" value={logDraft[key]} onChange={e => setLogDraft({ ...logDraft, [key]: e.target.value })} placeholder="0" /><span>{unit}</span></div></label>)}{profile.trackedNutrients.map(key => <label key={key}>{nutrients[key].label}<div><input type="number" min="0" value={logDraft.extras[key] || ''} onChange={e => setLogDraft({ ...logDraft, extras: { ...logDraft.extras, [key]: e.target.value } })} placeholder="0" /><span>{nutrients[key].unit}</span></div></label>)}</div><button className="next-button save-log" disabled={!logValid || saving} onClick={saveDailyLog}>{saving ? 'Saving...' : 'Save daily log'}</button></section></div>}
     {showNutrients && <div className="modal-backdrop" onMouseDown={() => setShowNutrients(false)}><section className="log-modal nutrient-modal" onMouseDown={e => e.stopPropagation()}><button className="close-button" onClick={() => setShowNutrients(false)}>×</button><span className="eyebrow">Customize your dashboard</span><h2>Add a nutrient</h2><p>Choose another nutrient to track each day.</p><div className="nutrient-options">{(Object.keys(nutrients) as NutrientKey[]).map(key => { const selected = profile.trackedNutrients.includes(key); return <button className={selected ? 'selected' : ''} key={key} disabled={saving || selected} onClick={() => chooseNutrient(key)}><span><strong>{nutrients[key].label}</strong><small>Daily guide: {nutrients[key].target}{nutrients[key].unit}</small></span><b>{selected ? '✓' : '+'}</b></button> })}</div></section></div>}
+    {showFoodForm && <div className="modal-backdrop" onMouseDown={() => setShowFoodForm(false)}><section className="log-modal food-modal" onMouseDown={e => e.stopPropagation()}><button className="close-button" onClick={() => setShowFoodForm(false)}>×</button><span className="eyebrow">New saved food</span><h2>Scan a nutrition label</h2><p>Take a clear photo, then enter the values for one serving.</p><label className={`camera-capture ${labelPreview ? 'has-image' : ''}`}>{labelPreview ? <img src={labelPreview} alt="Nutrition label preview" /> : <><b>⌁</b><strong>Take label photo</strong><small>Camera or photo library</small></>}<input type="file" accept="image/*" capture="environment" onChange={e => selectLabelImage(e.target.files?.[0])} /></label><div className="food-fields"><label>Food name<input value={foodDraft.name} onChange={e => setFoodDraft({ ...foodDraft, name: e.target.value })} placeholder="e.g. Granola bar" /></label><label>Serving size<input value={foodDraft.serving} onChange={e => setFoodDraft({ ...foodDraft, serving: e.target.value })} placeholder="e.g. 1 bar (40g)" /></label></div><div className="log-inputs">{([['calories','Calories','kcal'],['protein','Protein','g'],['fiber','Fiber','g'],['carbs','Carbs','g']] as const).map(([key,label,unit]) => <label key={key}>{label}<div><input type="number" min="0" value={foodDraft[key]} onChange={e => setFoodDraft({ ...foodDraft, [key]: e.target.value })} placeholder="0" /><span>{unit}</span></div></label>)}</div><button className="next-button save-log" disabled={!foodDraft.name.trim() || !foodDraft.serving.trim() || saving} onClick={saveFood}>{saving ? 'Saving...' : 'Save to my foods'}</button></section></div>}
   </main>
 
   return <main className="onboarding-page"><div className="onboarding-frame"><header><img src="/calpal-logo-green.png" alt="CalPal" /><span>Step {step + 1} of 4</span></header><div className="progress"><i style={{ width: `${((step + 1) / 4) * 100}%` }} /></div><section className="step-card">
