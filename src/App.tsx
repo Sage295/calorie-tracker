@@ -38,6 +38,27 @@ const activityLevels = [
   ['1.55', 'Active', 'Exercise 3-5 days a week'], ['1.725', 'Very active', 'Hard exercise 6-7 days a week'],
 ]
 
+async function prepareImageForScanning(file: File) {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const maxSide = 1600
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } catch {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+}
+
 function calculatePlan(profile: Profile) {
   const kg = Number(profile.weight) * 0.453592
   const cm = (Number(profile.heightFeet) * 12 + Number(profile.heightInches)) * 2.54
@@ -228,14 +249,16 @@ function App() {
     if (labelPreview) URL.revokeObjectURL(labelPreview)
     setLabelImage(file); setLabelPreview(URL.createObjectURL(file)); setScanError(''); setScanningLabel(true)
     try {
-      const image = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) })
+      const image = await prepareImageForScanning(file)
       const response = await fetch('/.netlify/functions/scan-label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) })
-      const result = await response.json()
+      const responseText = await response.text()
+      let result: { error?: string; is_nutrition_label?: boolean; rejection_reason?: string; product_name?: string; serving_size?: string; nutrients?: { name: string; value: number; unit: string }[] }
+      try { result = JSON.parse(responseText) } catch { throw new Error(response.ok ? 'The scanner returned an unreadable response.' : 'The scanning service could not process this image. Please try again.') }
       if (!response.ok) throw new Error(result.error || 'The label could not be scanned.')
       if (!result.is_nutrition_label) throw new Error(result.rejection_reason || 'This does not appear to be a readable nutrition label.')
       const values: Record<string, string> = {}
       const extras: ExtraFoodNutrient[] = []
-      for (const nutrient of result.nutrients as { name: string; value: number; unit: string }[]) {
+      for (const nutrient of result.nutrients || []) {
         const name = nutrient.name.toLowerCase()
         if (name === 'calories' || name === 'energy') values.calories = String(nutrient.value)
         else if (name.includes('protein')) values.protein = String(nutrient.value)
