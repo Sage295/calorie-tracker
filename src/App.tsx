@@ -27,6 +27,7 @@ const lastSevenDays = () => {
     return { dateStr: date.toLocaleDateString('en-CA'), label: date.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2) }
   })
 }
+const round2 = (value: number) => Math.round(value * 100) / 100
 const matchNutrientKey = (name: string): NutrientKey | null => {
   const lower = name.toLowerCase()
   if (lower.includes('saturated')) return 'saturated_fat'
@@ -241,6 +242,12 @@ function App() {
     return () => data.subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    if (!message) return
+    const timer = setTimeout(() => setMessage(''), 4000)
+    return () => clearTimeout(timer)
+  }, [message])
+
   const loadLogs = useCallback(async (userId: string) => {
     const start = new Date(); start.setFullYear(start.getFullYear() - 1)
     const { data, error } = await supabase.from('daily_nutrition').select('log_date, calories, protein_grams, fiber_grams, carbs_grams, extra_nutrients').eq('user_id', userId).gte('log_date', start.toLocaleDateString('en-CA')).order('log_date')
@@ -293,7 +300,7 @@ function App() {
     const { error: entryError } = await supabase.from('food_entries').insert(entry)
     if (entryError) { setSaving(false); setMessage(entryError.message); return }
     const existingExtra = current?.extra_nutrients || {}
-    const extra_nutrients = profile.trackedNutrients.reduce((values, key) => ({ ...values, [key]: Number(values[key] || 0) + Number(logDraft.extras[key] || 0) }), existingExtra)
+    const extra_nutrients = profile.trackedNutrients.reduce((values, key) => ({ ...values, [key]: round2(Number(values[key] || 0) + Number(logDraft.extras[key] || 0)) }), existingExtra)
     const { error } = await supabase.from('daily_nutrition').upsert({ user_id: session.user.id, log_date: logDraft.date, calories: (current?.calories || 0) + Number(logDraft.calories), protein_grams: (current?.protein_grams || 0) + Number(logDraft.protein), fiber_grams: (current?.fiber_grams || 0) + Number(logDraft.fiber), carbs_grams: (current?.carbs_grams || 0) + Number(logDraft.carbs), extra_nutrients, updated_at: new Date().toISOString() }, { onConflict: 'user_id,log_date' })
     setSaving(false)
     if (error) setMessage(error.message); else { setShowLog(false); setLogDraft(emptyLog()); loadLogs(session.user.id); loadFoodEntries(session.user.id) }
@@ -435,7 +442,7 @@ function App() {
     const extra_nutrients = (food.extra_nutrients || []).reduce((values, nutrient) => {
       const key = matchNutrientKey(nutrient.name)
       if (!key || !profile.trackedNutrients.includes(key)) return values
-      return { ...values, [key]: (values[key] || 0) + (Number(nutrient.value) || 0) }
+      return { ...values, [key]: round2((values[key] || 0) + (Number(nutrient.value) || 0)) }
     }, existingExtra)
     const { error } = await supabase.from('daily_nutrition').upsert({ user_id: session.user.id, log_date: today(), calories: (current?.calories || 0) + food.calories, protein_grams: (current?.protein_grams || 0) + food.protein_grams, fiber_grams: (current?.fiber_grams || 0) + food.fiber_grams, carbs_grams: (current?.carbs_grams || 0) + food.carbs_grams, extra_nutrients, updated_at: new Date().toISOString() }, { onConflict: 'user_id,log_date' })
     if (error) { setMessage(error.message); return false }
@@ -568,7 +575,7 @@ function App() {
           <div className="macro-box carbs-box"><b>▦</b><span>Carbs</span><strong>{todaysLog?.carbs_grams || 0}g <small>{plan.carbs}g</small></strong><i><em style={{ width: `${Math.min(100, ((todaysLog?.carbs_grams || 0) / plan.carbs) * 100)}%` }} /></i></div>
           <div className="macro-box protein-box"><b>◉</b><span>Protein</span><strong>{todaysLog?.protein_grams || 0}g <small>{plan.protein}g</small></strong><i><em style={{ width: `${Math.min(100, ((todaysLog?.protein_grams || 0) / plan.protein) * 100)}%` }} /></i></div>
           <div className="macro-box fiber-box"><b>❧</b><span>Fiber</span><strong>{todaysLog?.fiber_grams || 0}g <small>{plan.fiber}g</small></strong><i><em style={{ width: `${Math.min(100, ((todaysLog?.fiber_grams || 0) / plan.fiber) * 100)}%` }} /></i></div>
-          {profile.trackedNutrients.map((key, index) => <div className={`macro-box custom-macro ${index % 2 ? 'protein-box' : 'fiber-box'}`} key={key}><b>{nutrients[key].icon}</b><span>{nutrients[key].label}</span><strong>{todaysLog?.extra_nutrients?.[key] || 0}{nutrients[key].unit} <small>{nutrients[key].target}{nutrients[key].unit}</small></strong><i><em style={{ width: `${Math.min(100, ((todaysLog?.extra_nutrients?.[key] || 0) / nutrients[key].target) * 100)}%` }} /></i></div>)}
+          {profile.trackedNutrients.map((key, index) => <div className={`macro-box custom-macro ${index % 2 ? 'protein-box' : 'fiber-box'}`} key={key}><b>{nutrients[key].icon}</b><span>{nutrients[key].label}</span><strong>{round2(todaysLog?.extra_nutrients?.[key] || 0)}{nutrients[key].unit} <small>{nutrients[key].target}{nutrients[key].unit}</small></strong><i><em style={{ width: `${Math.min(100, ((todaysLog?.extra_nutrients?.[key] || 0) / nutrients[key].target) * 100)}%` }} /></i></div>)}
           {profile.trackedNutrients.length < Object.keys(nutrients).length && <button className="macro-box total-box add-macro" onClick={() => setShowNutrients(true)}><b>＋</b><strong>Add nutrient</strong><small>Choose what to track</small></button>}
         </section>
       </>}
@@ -595,7 +602,7 @@ function App() {
         <div className="day-detail-row"><span>Protein</span><strong>{dayLog.protein_grams}g</strong></div>
         <div className="day-detail-row"><span>Fiber</span><strong>{dayLog.fiber_grams}g</strong></div>
         <div className="day-detail-row"><span>Carbs</span><strong>{dayLog.carbs_grams}g</strong></div>
-        {profile.trackedNutrients.map(key => <div className="day-detail-row" key={key}><span>{nutrients[key].label}</span><strong>{dayLog.extra_nutrients?.[key] || 0}{nutrients[key].unit}</strong></div>)}
+        {profile.trackedNutrients.map(key => <div className="day-detail-row" key={key}><span>{nutrients[key].label}</span><strong>{round2(dayLog.extra_nutrients?.[key] || 0)}{nutrients[key].unit}</strong></div>)}
       </div>
     })()}</section></div>}
     {showWeightForm && <div className="modal-backdrop" onMouseDown={() => setShowWeightForm(false)}><section className="log-modal" onMouseDown={e => e.stopPropagation()}><button className="close-button" onClick={() => setShowWeightForm(false)}>×</button><span className="eyebrow">Update your weight</span><h2>Record your weight</h2><p>Tracking changes over time updates your calorie plan too.</p><div className="input-wrap full"><input inputMode="decimal" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="145" /><span>lbs</span></div><button className="next-button save-log" disabled={!weightDraft.trim() || saving} onClick={saveWeight}>{saving ? 'Saving...' : 'Save weight'}</button></section></div>}
